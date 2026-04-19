@@ -1,0 +1,58 @@
+[
+  {
+    "claim_id": "CLM1001",
+    "expected_action": "route_to_senior_reviewer",
+    "rationale": "PPO policy does not contain explicit MRI lumbar-spine coverage criteria; ambiguity → escalate.",
+    "ambiguity": "ambiguous",
+    "expected_rule_path": "llm"
+  },
+  {
+    "claim_id": "CLM1002",
+    "expected_action": "deny_claim",
+    "rationale": "Member inactive; deterministic deny regardless of service.",
+    "ambiguity": "unambiguous",
+    "expected_rule_path": "rule.inactive_plan"
+  },
+  {
+    "claim_id": "CLM1003",
+    "expected_action": "route_to_coding_review",
+    "rationale": "ICD-10 E11.9 (diabetes) inconsistent with submitted CPT; routing to coding review.",
+    "ambiguity": "unambiguous",
+    "expected_rule_path": "rule.code_consistency"
+  },
+  {
+    "claim_id": "CLM1004",
+    "expected_action": "request_missing_documentation",
+    "rationale": "Preapproval missing required supporting documents.",
+    "ambiguity": "unambiguous",
+    "expected_rule_path": "rule.required_docs"
+  },
+  {
+    "claim_id": "CLM1005",
+    "expected_action": "approve_claim_payment",
+    "rationale": "HMO, covered routine service, active member, docs present.",
+    "ambiguity": "clear",
+    "expected_rule_path": "llm"
+  },
+  {
+    "claim_id": "CLM1006",
+    "expected_action": "route_to_senior_reviewer",
+    "rationale": "Appeal with new supporting evidence but EPO policy is thin; escalate for human review.",
+    "ambiguity": "ambiguous",
+    "expected_rule_path": "llm"
+  },
+  {
+    "claim_id": "CLM1008",
+    "expected_action": "request_missing_documentation",
+    "rationale": "Standard claim lacks required docs per claim_type.",
+    "ambiguity": "unambiguous",
+    "expected_rule_path": "rule.required_docs"
+  },
+  {
+    "claim_id": "CLM1009",
+    "expected_action": "route_to_senior_reviewer",
+    "rationale": "Appeal; requires medical reviewer judgment on whether new evidence meets policy.",
+    "ambiguity": "ambiguous",
+    "expected_rule_path": "llm"
+  }
+]

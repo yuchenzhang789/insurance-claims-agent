@@ -1,0 +1,98 @@
+[
+  {
+    "claim_id": "CLM1001",
+    "member_status": "active",
+    "claim_type": "preapproval",
+    "insurance_provider": "Blue Shield PPO",
+    "diagnosis_code": "M54.5",
+    "procedure_code": "MRI-LS-SPINE",
+    "claimed_amount": 2200,
+    "supporting_documents": ["clinical_note"],
+    "provider_notes": "Persistent low back pain for 6 months, conservative therapy failed.",
+    "prior_denial_reason": null
+  },
+  {
+    "claim_id": "CLM1002",
+    "member_status": "inactive",
+    "claim_type": "standard",
+    "insurance_provider": "Blue Shield EPO",
+    "diagnosis_code": "E11.9",
+    "procedure_code": "OFFICE-VISIT",
+    "claimed_amount": 150,
+    "supporting_documents": ["claim_form"],
+    "provider_notes": "Routine visit for diabetes follow-up.",
+    "prior_denial_reason": null
+  },
+  {
+    "claim_id": "CLM1003",
+    "member_status": "active",
+    "claim_type": "standard",
+    "insurance_provider": "Blue Shield PPO",
+    "diagnosis_code": "Z00.00",
+    "procedure_code": "APPENDECTOMY",
+    "claimed_amount": 7800,
+    "supporting_documents": ["op_note"],
+    "provider_notes": "Appendectomy performed in emergency setting.",
+    "prior_denial_reason": null
+  },
+  {
+    "claim_id": "CLM1004",
+    "member_status": "active",
+    "claim_type": "preapproval",
+    "insurance_provider": "Blue Shield PPO",
+    "diagnosis_code": "J45.40",
+    "procedure_code": "BIOLOGIC-INJECTION",
+    "claimed_amount": 12000,
+    "supporting_documents": [],
+    "provider_notes": "Severe persistent asthma uncontrolled on inhaled steroids.",
+    "prior_denial_reason": null
+  },
+  {
+    "claim_id": "CLM1005",
+    "member_status": "active",
+    "claim_type": "standard",
+    "insurance_provider": "Blue Shield HMO",
+    "diagnosis_code": "L03.90",
+    "procedure_code": "ORAL-ANTIBIOTIC",
+    "claimed_amount": 85,
+    "supporting_documents": ["claim_form"],
+    "provider_notes": "Cellulitis treated with oral antibiotics.",
+    "prior_denial_reason": null
+  },
+  {
+    "claim_id": "CLM1006",
+    "member_status": "active",
+    "claim_type": "appeal",
+    "insurance_provider": "Blue Shield EPO",
+    "diagnosis_code": "F32.9",
+    "procedure_code": "PSYCH-THERAPY",
+    "claimed_amount": 900,
+    "supporting_documents": ["appeal_letter", "clinical_note"],
+    "provider_notes": "Appeal for previously denied psychotherapy sessions. Now including updated progress notes demonstrating medical necessity and functional impairment.",
+    "prior_denial_reason": "Insufficient documentation of medical necessity."
+  },
+  {
+    "claim_id": "CLM1008",
+    "member_status": "active",
+    "claim_type": "standard",
+    "insurance_provider": "Blue Shield PPO",
+    "diagnosis_code": "S72.001A",
+    "procedure_code": "HIP-REPLACEMENT",
+    "claimed_amount": 15500,
+    "supporting_documents": ["op_note", "discharge_summary"],
+    "provider_notes": "Hip fracture treated surgically.",
+    "prior_denial_reason": null
+  },
+  {
+    "claim_id": "CLM1009",
+    "member_status": "active",
+    "claim_type": "appeal",
+    "insurance_provider": "Blue Shield PPO",
+    "diagnosis_code": "E78.5",
+    "procedure_code": "LIPID-PANEL",
+    "claimed_amount": 110,
+    "supporting_documents": ["appeal_letter"],
+    "provider_notes": "Member appealing denial for lipid panel deemed screening only.",
+    "prior_denial_reason": "Service considered preventive and not covered under this plan."
+  }
+]
