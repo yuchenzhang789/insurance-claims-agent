@@ -10,6 +10,14 @@ import json
 import os
 from pathlib import Path
 
+import sys
+from pathlib import Path
+
+# Ensure repo root is importable (needed on Streamlit Cloud)
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 import streamlit as st
 
 # Load .env when running locally
