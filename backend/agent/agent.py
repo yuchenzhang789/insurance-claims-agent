@@ -19,7 +19,7 @@ from backend.agent.prompts import SYSTEM_PROMPT, build_user_message, build_retri
 
 MODEL = os.getenv("CLAIMS_AGENT_MODEL", "claude-sonnet-4-5")  # Sonnet 4.5+ for strong tool-use
 MAX_TOKENS = 1024
-RETRIEVAL_TOP_K = 5
+RETRIEVAL_TOP_K = 8
 LOW_CONFIDENCE_SCORE = 2.0  # BM25 threshold for "insufficient retrieval"
 
 

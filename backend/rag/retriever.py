@@ -30,12 +30,25 @@ class PlanIndex:
         self._tokenized = [tokenize(c["text"]) for c in chunks]
         self.bm25 = BM25Okapi(self._tokenized) if self._tokenized else None
 
+    # Source boost: prefer full EOC prose over SBC benefit tables and disclosure forms.
+    # SBC/disclosure docs add coverage breadth but EOC language is what policy decisions cite.
+    _SOURCE_BOOST = {"eoc": 1.3, "disclosure": 1.0, "sbc": 0.7}
+
+    # Sections that are purely navigational and never contain citable policy language.
+    # "Document Start" is a fallback label (heading not detected) — content is still valid.
+    _SKIP_SECTIONS = {"table of contents"}
+
     def search(self, query: str, top_k: int = 5) -> list[tuple[dict, float]]:
         if not self.bm25:
             return []
         q_tokens = tokenize(query)
         scores = self.bm25.get_scores(q_tokens)
-        ranked = sorted(zip(self.chunks, scores), key=lambda x: x[1], reverse=True)
+        boosted = [
+            (chunk, score * self._SOURCE_BOOST.get(chunk.get("source", "eoc"), 1.0))
+            for chunk, score in zip(self.chunks, scores)
+            if chunk.get("section", "").lower() not in self._SKIP_SECTIONS
+        ]
+        ranked = sorted(boosted, key=lambda x: x[1], reverse=True)
         return ranked[:top_k]
 
 

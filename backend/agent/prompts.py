@@ -92,6 +92,11 @@ def build_retrieval_query(claim: Claim) -> str:
     ]
     if claim.prior_denial_reason:
         parts.append(claim.prior_denial_reason)
-    # Add coverage/exclusion keywords to bias retrieval toward relevant sections
-    parts.append("coverage medical necessity exclusion")
+    # Claim-type specific bias — matches actual policy language in each context.
+    if claim.claim_type == "preapproval":
+        parts.append("Medically Necessary prior authorization Benefits coverages Principal")
+    elif claim.claim_type == "appeal":
+        parts.append("coverage medical necessity exclusion Benefits appeal review")
+    else:
+        parts.append("coverage exclusion Benefits Principal payment")
     return " ".join(parts)
