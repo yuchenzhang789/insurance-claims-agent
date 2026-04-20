@@ -4,7 +4,8 @@
     "expected_action": "route_to_senior_reviewer",
     "rationale": "PPO policy does not contain explicit MRI lumbar-spine coverage criteria; ambiguity → escalate.",
     "ambiguity": "ambiguous",
-    "expected_rule_path": "llm"
+    "expected_rule_path": "llm",
+    "expected_section": "General exclusions and limitations"
   },
   {
     "claim_id": "CLM1002",
@@ -32,14 +33,16 @@
     "expected_action": "approve_claim_payment",
     "rationale": "HMO, covered routine service, active member, docs present.",
     "ambiguity": "clear",
-    "expected_rule_path": "llm"
+    "expected_rule_path": "llm",
+    "expected_section": "Emergency Services"
   },
   {
     "claim_id": "CLM1006",
     "expected_action": "route_to_senior_reviewer",
     "rationale": "Appeal with new supporting evidence but EPO policy is thin; escalate for human review.",
     "ambiguity": "ambiguous",
-    "expected_rule_path": "llm"
+    "expected_rule_path": "llm",
+    "expected_section": "Document Start"
   },
   {
     "claim_id": "CLM1008",
@@ -53,6 +56,7 @@
     "expected_action": "route_to_senior_reviewer",
     "rationale": "Appeal; requires medical reviewer judgment on whether new evidence meets policy.",
     "ambiguity": "ambiguous",
-    "expected_rule_path": "llm"
+    "expected_rule_path": "llm",
+    "expected_section": "Principal exclusions and limitations on Benefits"
   }
 ]

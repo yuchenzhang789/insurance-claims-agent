@@ -146,14 +146,186 @@ def _tool_use_to_decision(
     )
 
 
+RULE_GROUNDING_QUERIES = {
+    "rule.inactive_plan": "eligibility enrollment termination member coverage ends",
+    "rule.code_consistency": "claim submission coding accuracy procedure diagnosis",
+    "rule.required_docs": "claim submission required documentation medical records",
+    "rule.high_amount": "prior authorization high cost services medical review",
+}
+
+
+def _terminal_rule_step(rule_trace: list[TraceStep]) -> str | None:
+    """Identify which rule.* step actually terminated the pipeline.
+    The rule engine short-circuits on trigger, so the last rule.* step is it —
+    but we confirm by checking the detail payload (different rules use different keys)."""
+    if not rule_trace:
+        return None
+    last = rule_trace[-1]
+    if not last.step.startswith("rule."):
+        return None
+    d = last.detail
+    if last.step == "rule.inactive_plan" and d.get("triggered"):
+        return last.step
+    if last.step == "rule.code_consistency" and d.get("consistent") is False:
+        return last.step
+    if last.step == "rule.required_docs" and d.get("missing"):
+        return last.step
+    if last.step == "rule.high_amount" and d.get("triggered"):
+        return last.step
+    return None
+
+
+def _ground_rule_decision(
+    decision: Decision,
+    claim: Claim,
+    rule_trace: list[TraceStep],
+    trace: list[TraceStep],
+) -> Decision:
+    """Attach a policy citation to a rule-engine terminal so every decision
+    carries retrieved policy evidence, per the spec's Policy Grounding requirement.
+
+    Uses a fixed query per rule — we're not asking the LLM to interpret anything,
+    just anchoring the decision in plan documentation the user can verify.
+    """
+    rule_name = _terminal_rule_step(rule_trace)
+    if rule_name is None:
+        return decision
+    query = RULE_GROUNDING_QUERIES.get(rule_name)
+    if not query:
+        return decision
+    retriever = get_retriever()
+    hits = retriever.search(claim.insurance_provider, query, top_k=1)
+    trace.append(
+        TraceStep(
+            step="rag.rule_grounding",
+            detail={
+                "rule": rule_name,
+                "query": query,
+                "plan": claim.insurance_provider,
+                "n_hits": len(hits),
+                "top_score": hits[0].score if hits else 0.0,
+            },
+        )
+    )
+    if hits:
+        # Top chunk attached verbatim — score reflects BM25 confidence. No LLM
+        # in the loop, so there's no excerpt to verify against retrieval.
+        return decision.model_copy(update={"citations": hits[:1]})
+    return decision
+
+
+_SUPPORTED_PROVIDERS = {"Blue Shield PPO", "Blue Shield EPO", "Blue Shield HMO"}
+_INJECTION_PHRASES = ["ignore previous", "system:", "you are now", "disregard", "new instructions"]
+_MEDICAL_ADVICE_PHRASES = ["you should take", "recommend treatment", "prescribe", "i recommend you"]
+
+
+_DISCLAIMER = "policy-emulation decision, not medical advice"
+
+
+def _guard_output(decision: Decision, trace: list[TraceStep]) -> Decision:
+    """Step 6: Structural output guardrail — checks disclaimer, allowed action, no medical advice."""
+    reason = decision.reason or ""
+    reason_lower = reason.lower()
+
+    disclaimer_present = _DISCLAIMER in reason_lower
+    action_valid = decision.action in {
+        "approve_pre_authorization", "approve_claim_payment", "deny_claim",
+        "request_missing_documentation", "route_to_senior_reviewer", "route_to_coding_review",
+    }
+    medical_advice_detected = any(p in reason_lower for p in _MEDICAL_ADVICE_PHRASES)
+
+    issues = []
+    if not disclaimer_present:
+        issues.append("disclaimer_missing")
+    if not action_valid:
+        issues.append("action_not_in_allowed_set")
+    if medical_advice_detected:
+        issues.append("medical_advice_detected")
+
+    passed = action_valid and not medical_advice_detected
+    trace.append(TraceStep(
+        step="guard.output",
+        detail={
+            "disclaimer_present": disclaimer_present,
+            "action_valid": action_valid,
+            "medical_advice_detected": medical_advice_detected,
+            "issues": issues,
+            "passed": passed,
+        },
+    ))
+
+    if not passed:
+        return Decision(
+            action="route_to_senior_reviewer",
+            reason=(
+                f"Output guardrail blocked the proposed decision ({decision.action}): "
+                f"{', '.join(issues)}. Escalating for human review. "
+                "This is a policy-emulation decision, not medical advice."
+            ),
+            routing_target="senior_medical_reviewer",
+        )
+
+    # Auto-append disclaimer if missing but otherwise clean
+    if not disclaimer_present:
+        decision = decision.model_copy(update={
+            "reason": reason.rstrip() + " This is a policy-emulation decision, not medical advice."
+        })
+
+    return decision
+
+
+def _validate_input(claim: Claim, trace: list[TraceStep]) -> None:
+    """Step 0: Log that structured fields have been validated."""
+    checks = {
+        "claim_type_valid": claim.claim_type in {"preapproval", "standard", "appeal"},
+        "member_status_valid": claim.member_status in {"active", "inactive"},
+        "claimed_amount_non_negative": claim.claimed_amount >= 0,
+        "required_fields_present": all([
+            claim.insurance_provider,
+            claim.diagnosis_code,
+            claim.procedure_code,
+        ]),
+        "prior_denial_present_for_appeal": (
+            bool(claim.prior_denial_reason) if claim.claim_type == "appeal" else None
+        ),
+    }
+    trace.append(TraceStep(step="validate.input", detail=checks))
+
+
+def _guard_input(claim: Claim, trace: list[TraceStep]) -> None:
+    """Step 1: Log input guardrail checks (carrier scope, injection heuristic, amount sanity)."""
+    provider_supported = claim.insurance_provider in _SUPPORTED_PROVIDERS
+    notes_lower = (claim.provider_notes or "").lower()
+    injection_detected = any(phrase in notes_lower for phrase in _INJECTION_PHRASES)
+    amount_sane = 0 <= claim.claimed_amount < 1_000_000
+
+    trace.append(TraceStep(
+        step="guard.input",
+        detail={
+            "provider_supported": provider_supported,
+            "injection_detected": injection_detected,
+            "amount_sane": amount_sane,
+            "passed": provider_supported and not injection_detected and amount_sane,
+        },
+    ))
+
+
 def review_claim(claim: Claim, client: Anthropic | None = None) -> ReviewResult:
     """End-to-end pipeline for a single claim."""
     trace: list[TraceStep] = []
 
-    # 1. Rule engine
+    # Step 0: Input validation
+    _validate_input(claim, trace)
+
+    # Step 1: Input guardrails
+    _guard_input(claim, trace)
+
+    # Step 2+: Rule engine
     terminal, rule_trace = check_overrides(claim)
     trace.extend(rule_trace)
     if terminal is not None:
+        terminal = _ground_rule_decision(terminal, claim, rule_trace, trace)
+        terminal = _guard_output(terminal, trace)
         return ReviewResult(claim_id=claim.claim_id, decision=terminal, trace=trace)
 
     # 2. Retrieval (per-plan namespaced)
@@ -190,6 +362,7 @@ def review_claim(claim: Claim, client: Anthropic | None = None) -> ReviewResult:
             routing_target="senior_medical_reviewer",
         )
         trace.append(TraceStep(step="guard.low_confidence_retrieval", detail={"triggered": True}))
+        d = _guard_output(d, trace)
         return ReviewResult(claim_id=claim.claim_id, decision=d, trace=trace)
 
     # 3. LLM tool call
@@ -262,4 +435,5 @@ def review_claim(claim: Claim, client: Anthropic | None = None) -> ReviewResult:
                 routing_target="senior_medical_reviewer",
             )
 
+    decision = _guard_output(decision, trace)
     return ReviewResult(claim_id=claim.claim_id, decision=decision, trace=trace)

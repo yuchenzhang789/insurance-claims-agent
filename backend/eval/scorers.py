@@ -52,6 +52,34 @@ def score_citations(result: ReviewResult) -> dict:
     }
 
 
+def score_expected_section(result: ReviewResult, expected_section: str | None) -> dict:
+    """Coarse snippet-ground-truth scorer.
+
+    We treat section title as the lightweight ground-truth label for the base eval
+    set. A match means at least one cited section equals the labeled section.
+    """
+    if not expected_section:
+        return {
+            "expected_section_present": False,
+            "expected_section_match": None,
+            "matched_section": None,
+        }
+
+    for citation in result.decision.citations:
+        if citation.section == expected_section:
+            return {
+                "expected_section_present": True,
+                "expected_section_match": True,
+                "matched_section": citation.section,
+            }
+
+    return {
+        "expected_section_present": True,
+        "expected_section_match": False,
+        "matched_section": None,
+    }
+
+
 JUDGE_PROMPT = """You are evaluating the quality of an insurance claims-review agent's decision. Score each dimension 1-5. Do NOT judge whether the action was correct — that is scored separately.
 
 ## Claim
@@ -81,6 +109,11 @@ def score_llm_judge(claim: dict, retrieved: list[dict], result: ReviewResult, cl
     """LLM-as-judge on groundedness. Only meaningful when the agent made a citation-bearing decision."""
     if not result.decision.citations:
         return {"judge_skipped": True, "reason": "no citations to judge"}
+    if "rag.search" not in {step.step for step in result.trace}:
+        return {
+            "judge_skipped": True,
+            "reason": "rule-terminal decision with post-hoc grounding citation",
+        }
 
     client = client or Anthropic()
 
@@ -135,13 +168,31 @@ def aggregate(per_case: list[dict]) -> dict:
             vals = [j.get(key) for j in judge_scores if isinstance(j.get(key), (int, float))]
             if vals:
                 avg_judge[key] = round(sum(vals) / len(vals), 2)
+    section_cases = [c for c in per_case if c.get("expected_section_present")]
+    section_matches = sum(1 for c in section_cases if c.get("expected_section_match"))
 
-    return {
+    summary = {
         "n_cases": n,
         "action_accuracy": round(action_correct / n, 3),
         "rule_path_accuracy": round(rule_correct / n, 3),
         "citation_verification_rate": (
             round(all_verified / len(cited_cases), 3) if cited_cases else None
         ),
+        "expected_section_accuracy": (
+            round(section_matches / len(section_cases), 3) if section_cases else None
+        ),
         "avg_judge_scores": avg_judge,
     }
+
+    # Breakdown by case kind (base vs perturbation) — perturbations stress robustness.
+    for kind in ("base", "perturbation"):
+        group = [c for c in per_case if c.get("kind") == kind]
+        if group:
+            summary[f"{kind}_n"] = len(group)
+            summary[f"{kind}_action_accuracy"] = round(
+                sum(1 for c in group if c.get("action_match")) / len(group), 3
+            )
+            summary[f"{kind}_rule_path_accuracy"] = round(
+                sum(1 for c in group if c.get("rule_path_match")) / len(group), 3
+            )
+    return summary

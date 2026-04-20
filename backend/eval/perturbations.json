@@ -1,0 +1,32 @@
+[
+  {
+    "perturbation_id": "P1_missing_docs",
+    "base_claim_id": "CLM1001",
+    "mutation": {"supporting_documents": []},
+    "expected_action": "request_missing_documentation",
+    "expected_rule_path": "rule.required_docs",
+    "rationale": "Stripping the clinical note from a preapproval must short-circuit to the docs rule, not the LLM path.",
+    "ambiguity": "unambiguous",
+    "tests": "robustness to missing documents"
+  },
+  {
+    "perturbation_id": "P2_inactive_flip",
+    "base_claim_id": "CLM1005",
+    "mutation": {"member_status": "inactive"},
+    "expected_action": "deny_claim",
+    "expected_rule_path": "rule.inactive_plan",
+    "rationale": "Flipping an otherwise clean approve claim to inactive must hard-deny.",
+    "ambiguity": "unambiguous",
+    "tests": "precedence of inactive override over approve path"
+  },
+  {
+    "perturbation_id": "P3_code_mismatch",
+    "base_claim_id": "CLM1008",
+    "mutation": {"procedure_code": "APPENDECTOMY"},
+    "expected_action": "route_to_coding_review",
+    "expected_rule_path": "rule.code_consistency",
+    "rationale": "S72 (hip fracture) paired with APPENDECTOMY is not in the consistency table; must flag coding review.",
+    "ambiguity": "unambiguous",
+    "tests": "robustness to injected code mismatch"
+  }
+]
