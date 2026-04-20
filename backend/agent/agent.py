@@ -365,10 +365,33 @@ def review_claim(claim: Claim, client: Anthropic | None = None) -> ReviewResult:
         d = _guard_output(d, trace)
         return ReviewResult(claim_id=claim.claim_id, decision=d, trace=trace)
 
-    # 3. LLM tool call
+    # 3. Appeal context — if this is an appeal, log the comparison the LLM is about to make.
+    if claim.claim_type == "appeal":
+        new_evidence_present = bool(
+            (claim.supporting_documents and len(claim.supporting_documents) > 1)
+            or (claim.provider_notes and len(claim.provider_notes.strip()) > 0)
+        )
+        trace.append(TraceStep(
+            step="llm.appeal_context",
+            detail={
+                "prior_denial_reason": claim.prior_denial_reason or "(none)",
+                "new_evidence_present": new_evidence_present,
+                "supporting_documents": claim.supporting_documents,
+                "query_augmented_with_denial": bool(claim.prior_denial_reason),
+                "note": "Production design: a dedicated appeal-comparison module would compare "
+                        "prior denial reason, prior policy basis, new evidence, and "
+                        "relevance/sufficiency. Prototype handles this via prompting.",
+            },
+        ))
+
+    # 4. LLM tool call
     client = client or Anthropic()
     user_msg = build_user_message(claim, retrieved, _rule_trace_summary(rule_trace))
-    trace.append(TraceStep(step="llm.request", detail={"model": MODEL, "user_msg_len": len(user_msg)}))
+    trace.append(TraceStep(step="llm.request", detail={
+        "model": MODEL,
+        "model_tier": "primary",
+        "user_msg_len": len(user_msg),
+    }))
 
     resp = client.messages.create(
         model=MODEL,
@@ -396,6 +419,7 @@ def review_claim(claim: Claim, client: Anthropic | None = None) -> ReviewResult:
             step="llm.response",
             detail={
                 "tool_name": tool_use.name,
+                "model_tier": "primary",
                 "tool_input_preview": str(tool_use.input)[:400],
                 "stop_reason": resp.stop_reason,
                 "usage": {

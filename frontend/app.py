@@ -33,6 +33,49 @@ from backend.agent.agent import review_claim
 # ── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Claims Review Agent", layout="wide", page_icon="🏥")
 
+DEMO_PRESETS = {
+    "— Select a scenario —": None,
+    "✅ Approve preauth (PPO, lumbar MRI)": (
+        "Active Blue Shield PPO member requesting preauthorization for a lumbar spine MRI. "
+        "Diagnosis M54.5, procedure MRI-LS-SPINE, claimed amount $2,200. "
+        "Supporting documents: clinical_note. "
+        "Provider notes: Persistent low back pain for 6 months, conservative therapy failed."
+    ),
+    "📋 Missing documentation (PPO preauth)": (
+        "Active Blue Shield PPO member requesting preauthorization for a biologic injection. "
+        "Diagnosis J45.40, procedure BIOLOGIC-INJECTION, claimed amount $12,000. "
+        "No supporting documents attached yet. "
+        "Provider notes: Severe persistent asthma uncontrolled on inhaled steroids."
+    ),
+    "❌ Inactive member (EPO standard)": (
+        "Inactive Blue Shield EPO member submitting a standard claim for an office visit. "
+        "Diagnosis E11.9, procedure OFFICE-VISIT, claimed amount $150. "
+        "Supporting documents: claim_form. "
+        "Provider notes: Routine visit for diabetes follow-up."
+    ),
+    "🔍 Code mismatch (PPO standard)": (
+        "Active Blue Shield PPO member submitting a standard claim. "
+        "Diagnosis Z00.00 (general adult medical exam), procedure APPENDECTOMY, claimed amount $7,800. "
+        "Supporting documents: op_note. "
+        "Provider notes: Appendectomy performed in emergency setting."
+    ),
+    "👤 High-amount senior review (PPO, hip replacement)": (
+        "Active Blue Shield PPO member submitting a standard claim for hip replacement. "
+        "Diagnosis S72.001A, procedure HIP-REPLACEMENT, claimed amount $15,500. "
+        "Supporting documents: op_note, discharge_summary. "
+        "Provider notes: Hip fracture treated surgically."
+    ),
+    "🔁 Appeal with new evidence (EPO, psychotherapy)": (
+        "Active Blue Shield EPO member submitting an appeal for psychotherapy. "
+        "Diagnosis F32.9, procedure PSYCH-THERAPY, claimed amount $900. "
+        "Supporting documents: appeal_letter, clinical_note. "
+        "Prior denial reason: Insufficient documentation of medical necessity. "
+        "Provider notes: Appeal for previously denied sessions, now including updated progress notes "
+        "demonstrating medical necessity and functional impairment."
+    ),
+}
+
+
 ACTION_COLORS = {
     "approve_pre_authorization": "green",
     "approve_claim_payment": "green",
@@ -68,8 +111,67 @@ def _init():
         st.session_state.awaiting_docs = []
     if "pending_field" not in st.session_state:
         st.session_state.pending_field = None  # field we last asked about
+    if "preset_to_inject" not in st.session_state:
+        st.session_state.preset_to_inject = None
 
 _init()
+
+
+def compute_confidence(result: dict) -> dict:
+    """Composite confidence — mirrors the production design's §Step 5 composite signal.
+    Inputs: retrieval strength, citation verification, guard outcomes, rule-terminal status.
+    """
+    trace = result.get("trace", [])
+    decision = result.get("decision", {})
+
+    # Pull signals from the trace
+    rag_step = next((t for t in trace if t["step"] == "rag.search"), None)
+    top_score = (rag_step["detail"].get("top_score") or 0.0) if rag_step else None
+    low_conf_guard = any(t["step"] == "guard.low_confidence_retrieval" for t in trace)
+    ungrounded_guard = any(t["step"] == "guard.ungrounded_decision" for t in trace)
+    output_guard = next((t for t in trace if t["step"] == "guard.output"), None)
+    output_passed = bool(output_guard and output_guard["detail"].get("passed"))
+    rule_terminal = any(
+        t["step"].startswith("rule.") and (
+            t["detail"].get("triggered") or
+            t["detail"].get("consistent") is False or
+            t["detail"].get("missing")
+        )
+        for t in trace
+    )
+
+    cits = decision.get("citations") or []
+    verified = sum(1 for c in cits if (c.get("score") or 0) > 0)
+    cit_rate = f"{verified}/{len(cits)}" if cits else "0/0"
+
+    # Tier logic
+    if rule_terminal:
+        tier = "HIGH"
+        tier_reason = "Deterministic rule terminal — no model judgment needed."
+    elif low_conf_guard or ungrounded_guard:
+        tier = "LOW"
+        tier_reason = "Escalated by a safety guard (insufficient grounding)."
+    elif not output_passed:
+        tier = "LOW"
+        tier_reason = "Output guardrail flagged the decision."
+    elif cits and verified == len(cits) and top_score and top_score >= 3.0:
+        tier = "HIGH"
+        tier_reason = "All citations verified; strong retrieval score."
+    elif cits and verified == len(cits):
+        tier = "MEDIUM"
+        tier_reason = "Citations verified but retrieval score is marginal."
+    else:
+        tier = "LOW"
+        tier_reason = "Some citations did not verify against retrieved chunks."
+
+    return {
+        "tier": tier,
+        "tier_reason": tier_reason,
+        "top_score": top_score,
+        "citations_verified": cit_rate,
+        "output_guard_passed": output_passed if output_guard else None,
+        "rule_terminal": rule_terminal,
+    }
 
 
 def add_message(role: str, content: str):
@@ -122,8 +224,35 @@ with col_status:
         reset()
         st.rerun()
 
-    # Show raw claim JSON once complete
+    st.divider()
+    st.markdown("**🎬 Try a scenario**")
+    st.caption("Pre-loaded claims — each exercises a different pipeline path.")
+    preset_choice = st.selectbox(
+        "Scenario",
+        list(DEMO_PRESETS.keys()),
+        label_visibility="collapsed",
+        key="preset_select",
+    )
+    if st.button("▶️ Run scenario", use_container_width=True,
+                 disabled=(DEMO_PRESETS[preset_choice] is None or st.session_state.stage == "reviewing")):
+        reset()
+        st.session_state.preset_to_inject = DEMO_PRESETS[preset_choice]
+        st.rerun()
+
+    # Composite confidence + raw decision JSON once complete
     if st.session_state.stage == "complete" and st.session_state.result:
+        st.divider()
+        conf = compute_confidence(st.session_state.result)
+        tier_color = {"HIGH": "green", "MEDIUM": "orange", "LOW": "red"}.get(conf["tier"], "gray")
+        st.markdown(f"**Confidence:** :{tier_color}[**{conf['tier']}**]")
+        st.caption(conf["tier_reason"])
+        st.markdown(
+            f"- BM25 top score: `{conf['top_score']:.2f}`" if conf["top_score"] is not None
+            else "- BM25 top score: _n/a (rule-terminal)_"
+        )
+        st.markdown(f"- Citations verified: `{conf['citations_verified']}`")
+        if conf["output_guard_passed"] is not None:
+            st.markdown(f"- Output guard: {'✅ passed' if conf['output_guard_passed'] else '❌ failed'}")
         with st.expander("📄 Full decision JSON"):
             st.code(json.dumps(st.session_state.result, indent=2), language="json")
 
@@ -187,6 +316,7 @@ with col_chat:
                 "rule.": "Step 2",
                 "rag.search": "Step 3",
                 "rag.rule_grounding": "Step 3",
+                "llm.appeal_context": "Step 3b",
                 "llm.": "Step 4",
                 "validate.decision": "Step 5",
                 "guard.low_confidence_retrieval": "Step 5",
@@ -209,7 +339,13 @@ with col_chat:
 
     # Chat input (disabled once complete)
     if st.session_state.stage != "complete":
-        user_input = st.chat_input("Describe the claim or answer the question above...")
+        typed_input = st.chat_input("Describe the claim or answer the question above...")
+
+        # Preset injection: treat a preset exactly like a typed user message
+        user_input = typed_input
+        if user_input is None and st.session_state.preset_to_inject:
+            user_input = st.session_state.preset_to_inject
+            st.session_state.preset_to_inject = None
 
         if user_input:
             add_message("user", user_input)

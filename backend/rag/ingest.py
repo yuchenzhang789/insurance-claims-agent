@@ -15,16 +15,32 @@ class Chunk:
     section: str
     page: int
     text: str
+    source: str = "eoc"  # "eoc" (full Evidence of Coverage) or "sbc" (Summary of Benefits) or "disclosure"
+    source_file: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
-# Map filename → plan label
-PLAN_FILES = {
-    "blueshield_ppo.pdf": "Blue Shield PPO",
-    "blueshield_epo.pdf": "Blue Shield EPO",
-    "blueshield_hmo.pdf": "Blue Shield HMO",
+# Map filename → (plan label, source type). Source is used so production can
+# prefer EOC prose over SBC tables when both exist for the same plan.
+PLAN_FILES: dict[str, tuple[str, str]] = {
+    # Full EOC documents — the primary source of policy language
+    "blueshield_ppo.pdf": ("Blue Shield PPO", "eoc"),
+    "blueshield_epo.pdf": ("Blue Shield EPO", "eoc"),
+    "blueshield_hmo.pdf": ("Blue Shield HMO", "eoc"),
+    # Disclosure document for PPO large-group
+    "202601PPODSCL.pdf": ("Blue Shield PPO", "disclosure"),
+    # Summary of Benefits — PPO plan variants (all fold into the Blue Shield PPO index)
+    "A16208-1-26.pdf": ("Blue Shield PPO", "sbc"),
+    "A20303-1-26.pdf": ("Blue Shield PPO", "sbc"),
+    "A40341-1-26.pdf": ("Blue Shield PPO", "sbc"),
+    "A49361-1-26.pdf": ("Blue Shield PPO", "sbc"),
+    "A50088-1-26.pdf": ("Blue Shield PPO", "sbc"),
+    "A50100-1-26.pdf": ("Blue Shield PPO", "sbc"),
+    "A51781-1-26.pdf": ("Blue Shield PPO", "sbc"),
+    "A52175-1-26.pdf": ("Blue Shield PPO", "sbc"),
+    "A52187-1-26.pdf": ("Blue Shield PPO", "sbc"),
 }
 
 # Heuristic section-heading patterns derived from Blue Shield doc structure.
@@ -104,7 +120,7 @@ def extract_page_blocks(pdf_path: Path) -> list[tuple[int, str]]:
     return pages
 
 
-def chunk_pdf(pdf_path: Path, plan: str, window: int = 900, overlap: int = 150) -> list[Chunk]:
+def chunk_pdf(pdf_path: Path, plan: str, window: int = 900, overlap: int = 150, source: str = "eoc") -> list[Chunk]:
     """
     Produce section-tagged chunks from a PDF.
     Algorithm:
@@ -126,7 +142,7 @@ def chunk_pdf(pdf_path: Path, plan: str, window: int = 900, overlap: int = 150) 
                 # Flush current buffer before switching section
                 if buf.strip():
                     chunks.append(
-                        Chunk(plan=plan, section=buf_section, page=buf_page, text=buf.strip())
+                        Chunk(plan=plan, section=buf_section, page=buf_page, text=buf.strip(), source=source, source_file=pdf_path.name)
                     )
                     buf = ""
                 current_section = heading
@@ -148,21 +164,23 @@ def chunk_pdf(pdf_path: Path, plan: str, window: int = 900, overlap: int = 150) 
                 buf_section = current_section
     # Final flush
     if buf.strip():
-        chunks.append(Chunk(plan=plan, section=buf_section, page=buf_page, text=buf.strip()))
+        chunks.append(Chunk(plan=plan, section=buf_section, page=buf_page, text=buf.strip(), source=source, source_file=pdf_path.name))
     return chunks
 
 
 def build_index(policies_dir: Path, out_path: Path) -> dict:
     """Build { plan_name: [chunk_dict, ...] } and write JSON."""
     index: dict[str, list[dict]] = {}
-    for fname, plan in PLAN_FILES.items():
+    for fname, (plan, source) in PLAN_FILES.items():
         pdf = policies_dir / fname
         if not pdf.exists():
             print(f"[ingest] skipping missing file: {pdf}")
             continue
-        chunks = chunk_pdf(pdf, plan)
-        index[plan] = [c.to_dict() for c in chunks]
-        print(f"[ingest] {plan}: {len(chunks)} chunks from {fname}")
+        chunks = chunk_pdf(pdf, plan, source=source)
+        index.setdefault(plan, []).extend(c.to_dict() for c in chunks)
+        print(f"[ingest] {plan} ({source}): {len(chunks)} chunks from {fname}")
+    for plan, cs in index.items():
+        print(f"[ingest] TOTAL {plan}: {len(cs)} chunks")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(index, indent=2))
     print(f"[ingest] wrote {out_path}")

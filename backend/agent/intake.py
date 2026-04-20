@@ -8,7 +8,8 @@ import uuid
 from anthropic import Anthropic
 
 
-INTAKE_MODEL = os.getenv("CLAIMS_AGENT_MODEL", "claude-sonnet-4-5")
+INTAKE_MODEL = os.getenv("CLAIMS_INTAKE_MODEL", os.getenv("CLAIMS_AGENT_MODEL", "claude-sonnet-4-5"))
+INTAKE_MODEL_TIER = "lightweight"  # Production: point CLAIMS_INTAKE_MODEL at a smaller/cheaper model
 
 REQUIRED_FIELDS = [
     "member_status",
