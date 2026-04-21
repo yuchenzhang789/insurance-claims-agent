@@ -62,7 +62,7 @@ Return ONLY valid JSON with these exact keys (use null for anything not yet ment
 
 ## Other mapping rules:
 - Plan names: "PPO" → "Blue Shield PPO", "EPO" → "Blue Shield EPO", "HMO" → "Blue Shield HMO"
-- Member status: "active member", "enrolled" → "active"; "lapsed", "cancelled", "terminated" → "inactive"
+- Member status: "active", "Active", "active member", "enrolled" → "active"; "inactive", "Inactive", "lapsed", "cancelled", "terminated" → "inactive"
 - Claim type: "pre-auth", "prior authorization", "authorization" → "preapproval"; "appeal", "dispute", "reconsideration" → "appeal"; everything else → "standard"
 - supporting_documents: use values from ["claim_form", "clinical_note", "op_note", "appeal_letter", "discharge_summary", "lab_results"]
 - provider_notes: combine any clinical context into a single string; "" if none
