@@ -65,8 +65,8 @@ DEMO_PRESETS = {
         "Supporting documents: claim_form, op_note, discharge_summary. "
         "Provider notes: Hip fracture treated surgically."
     ),
-    "🔁 Appeal with new evidence (EPO, psychotherapy)": (
-        "Active Blue Shield EPO member submitting an appeal for psychotherapy. "
+    "🔁 Appeal with new evidence (PPO, psychotherapy)": (
+        "Active Blue Shield PPO member submitting an appeal for psychotherapy. "
         "Diagnosis F32.9, procedure PSYCH-THERAPY, claimed amount $900. "
         "Supporting documents: appeal_letter, clinical_note. "
         "Prior denial reason: Insufficient documentation of medical necessity. "
