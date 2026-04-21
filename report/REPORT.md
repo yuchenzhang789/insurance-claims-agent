@@ -656,9 +656,238 @@ Most "contradictions" are mundane: the claim is for a non-covered service, or th
 - Rule-vs-policy conflicts: rules win by construction (rule engine runs before retrieval).
 - Prompt injection: data-as-data framing in the user message; no regex block; post-generation validator catches the most common outcome (ungrounded decision → escalation).
 
+## 3.3 Conversational intake and mid-process gap filling
+
+### The problem
+
+Structured claim fields (diagnosis code, procedure code, member status, etc.) must all be present before the review pipeline can run reliably. In the prototype, a form pre-validates completeness before submission. In production, claims arrive through many channels — phone calls, provider portals, faxed referrals — and are often incomplete.
+
+### Production design
+
+The intake flow is a short **conversational loop** backed by a simple **claim state machine**. No new frameworks — just Claude, Redis, and Postgres.
+
+**State machine (5 states):**
+
+```
+INTAKE → VALIDATING → REVIEWING → AWAITING_USER → COMPLETE
+```
+
+- `INTAKE`: agent extracts structured fields from free-text (one Claude call). Partial fills are fine — missing fields stay `null`.
+- `VALIDATING`: deterministic check against a required-fields schema. Any `null` required field triggers a targeted question back to the user. Loop until all required fields are filled.
+- `REVIEWING`: the existing rule engine → retrieval → LLM pipeline runs. If the pipeline emits `request_missing_documentation`, the claim moves to `AWAITING_USER` with the request attached.
+- `AWAITING_USER`: the agent is paused. The human (clinician or reviewer) responds. On response, the claim state is updated and the pipeline **resumes from `REVIEWING`** — not from scratch.
+- `COMPLETE`: decision is stored, conversation closed.
+
+**Session state storage:**
+
+Each session stores: current state, partial `Claim` fields, full conversation history, and any pending question. Two layers:
+
+- **Redis** (TTL 24h): hot session data. Every chat message reads/writes one Redis key (`session:{id}`). Fast, cheap, survives page refresh.
+- **Postgres**: durable audit log. On `COMPLETE` (or on any state transition), the full session is written to a `claim_sessions` table. Required for compliance — every decision must be reproducible from the stored context.
+
+**Why not RAG for session memory?** RAG retrieves from a large corpus by semantic similarity — wrong tool for structured session state where you need exact key-value reads and writes. Redis is the right tool: O(1) read/write, built-in TTL, simple.
+
+**Mid-process gap filling:**
+
+If the pipeline reaches `REVIEWING` and the LLM returns `request_missing_documentation` (a document gap, not a field gap), the orchestrator:
+1. Moves state to `AWAITING_USER`, stores the pending request in the session.
+2. Sends a targeted message to the user: "The policy requires a clinical note demonstrating medical necessity for this procedure. Can you provide it?"
+3. On response, re-runs only the review step (rules have already passed; retrieval can be re-run cheaply). No full restart needed.
+
+Field gaps (e.g. `prior_denial_reason` discovered during `REVIEWING`) are handled the same way: pause → ask → update field → resume from `REVIEWING`.
+
+**What's explainable in one sentence per piece:**
+
+- *State machine*: five named states, transitions are explicit — easy to reason about and debug.
+- *Redis*: in-memory key-value store with expiry — hot session cache.
+- *Postgres*: relational DB — durable audit trail, queryable for compliance.
+- *Resume vs. restart*: we store which stage the pipeline is at, so we can jump back in rather than re-running rules and retrieval from the top.
+
+### Track B (prototype)
+
+Streamlit `st.session_state` stores the conversation history and partial claim fields in memory for the duration of the browser session. No Redis, no Postgres. The extraction agent fills fields from free text; the validator loops until complete; the review pipeline runs once the required fields are present. There is a lightweight mid-process resume path for document gaps: if the review returns `request_missing_documentation`, the UI keeps the conversation open, attaches the user-supplied docs, and re-runs the review. What it still does **not** have is durable pause/resume across refreshes or devices.
+
 ---
 
-# Assumptions
+# Part 4 — Demo & Prototype
+
+This part exists because the report describes a production design that was not built, alongside a prototype that was. The two are related but not equivalent. Reading the design without seeing the prototype run leaves the design ungrounded; running the prototype without the design leaves its decisions unexplained. Part 4 closes that gap: it maps the running code back to the design, documents the intentional scope reductions, and gives a reader or interviewer enough context to exercise the demo meaningfully.
+
+---
+
+## 4.1 Why the prototype exists
+
+The prototype is not a scaled-down implementation of the production design. It is an **architectural proof-of-concept** — the minimal code that proves each design component works in combination and that the pipeline produces the behaviors described in Parts 1–3.
+
+Three things the prototype validates that a design document cannot:
+
+1. **The hybrid architecture works end-to-end.** Rules fire before the LLM. Retrieval is namespaced by plan. The validator catches ungrounded decisions. These are design claims; the prototype makes them verifiable.
+2. **The claim intake loop closes.** Free-text description → structured fields → rule engine → retrieval → decision → cited reason is a seven-step chain. Any broken link produces wrong output. The prototype runs the full chain.
+3. **The six actions are reachable.** Each of the six tool calls (approve pre-authorization, approve payment, deny, request docs, route to senior reviewer, route to coding review) is reached by at least one scenario. That matters — a pipeline that always escalates satisfies the schema but does nothing useful.
+
+What the prototype is **not** meant to validate:
+
+- Production performance (BM25-only retrieval, single Streamlit process, no auth).
+- Real policy coverage breadth (three Blue Shield of California plans; 424 chunks total).
+- Compliance posture (no PHI, no audit-log retention, no HIPAA infrastructure).
+
+Each scope reduction is intentional and documented. The production design describes what replaces each one.
+
+---
+
+## 4.2 Prototype vs. production design
+
+The table below maps each production component to its prototype counterpart. Items marked **stub** are described in the report but not implemented; items marked **simplified** are implemented with a scoped-down version.
+
+| Component | Track A (production) | Track B (prototype) | Difference |
+|---|---|---|---|
+| PDF ingestion | Layout-aware parse (Textract/Unstructured), section segmentation LLM pass, pgvector chunk store | `pypdf` + regex heading detector, JSON flat file | Layout fidelity; EPO/HMO have thin corpora as a result |
+| Retrieval | BM25 + dense embeddings + RRF + cross-encoder reranker | BM25 only, in-memory per-plan index | No semantic matching; mitigated by low-confidence escalation floor |
+| Policy versioning | Effective-date filtering per date-of-service | Single static version per plan | Claims cannot be adjudicated against a prior policy version |
+| Model routing | Haiku / Sonnet / Opus by complexity; self-consistency on high-stakes actions | Single Sonnet 4.5 call | Higher cost per decision; no self-consistency vote |
+| Claim storage | Postgres, versioned, field-level PHI encryption | `data/claims.json` flat file | No durability, no PHI handling |
+| Session state | Redis (TTL 24 h) + Postgres durable audit log | `st.session_state` (in-memory, browser tab lifetime) | No cross-session persistence; refresh loses state |
+| Serving | FastAPI async + per-tenant rate limits | FastAPI single-process + Streamlit | Not production-scalable |
+| Evaluation | Offline harness + shadow mode + HITL queue + calibration | Offline harness only (`backend/eval/run.py`) | Shadow mode and HITL described, not built |
+| Compliance | HIPAA infrastructure, regulatory transparency, bias audits | Described in §1.4; not implemented | No real PHI; no regulatory filing path |
+| Validators | All six in §1.2 | Validators 1, 2, 6 and simplified 3 | Action/claim-type consistency (#4) and rule-engine consistency (#5) are TODOs |
+| Prompt injection block | Pre-retrieval regex → hard block | Logged only in `guard.input` trace step (fixed in final code: now enforced) | See §3.2 and the implementation note below |
+
+**Implementation note on guardrail enforcement.** In the final submitted code, `_guard_input()` in `backend/agent/agent.py` returns a `Decision | None` — a blocking decision if any check fails, `None` to continue. The carrier-scope check, injection-phrase heuristic, and amount-sanity check all terminate the pipeline before retrieval and the LLM call. This matches the §1.4 design.
+
+---
+
+## 4.3 Component map: where the design lives in the code
+
+Each subsection of Part 1 has a counterpart in the prototype. The table below is a navigation aid — read alongside Part 1, not instead of it.
+
+| Design section | What it describes | Prototype file | Key function / class |
+|---|---|---|---|
+| §1.1 Chunking | Section-aware PDF chunking | `backend/rag/ingest.py` | `ingest_pdf()` |
+| §1.1 Retrieval | BM25 per-plan namespace | `backend/rag/retriever.py` | `PlanIndex`, `Retriever` |
+| §1.1 Grounding | Citation span verifier | `backend/agent/agent.py` | `_verify_citation_excerpt()` |
+| §1.2 Rule engine | 4-rule deterministic overrides | `backend/rules/engine.py` | `check_overrides()` |
+| §1.2 Code consistency | ICD ↔ CPT table | `backend/rules/codes.py` | `is_consistent()` |
+| §1.2 Tool schemas | Six action tools | `backend/agent/tools.py` | `TOOLS` list |
+| §1.2 LLM pipeline | Agent controller, validation | `backend/agent/agent.py` | `review_claim()` |
+| §1.3 Prompts | System prompt, user message | `backend/agent/prompts.py` | `SYSTEM_PROMPT`, `build_user_message()` |
+| §1.4 Safety | Input/output guards | `backend/agent/agent.py` | `_guard_input()`, `_guard_output()` |
+| §3.3 Intake loop | Conversational field extraction | `backend/agent/intake.py` | `extract_claim_fields()`, `missing_required_fields()` |
+| Part 2 Eval harness | Offline evaluation | `backend/eval/run.py` | `run_eval()` |
+| UI | Decision + trace panel | `frontend/app.py` | Streamlit app |
+
+---
+
+## 4.4 Demo scenarios
+
+Six scenarios are pre-loaded in the sidebar. Together they cover every deterministic override, both LLM-driven paths (approve and deny), and the appeal overturning pattern. Each scenario exercises a distinct slice of the pipeline.
+
+| Scenario | Plan | Claim type | Expected action | Pipeline path | Design point illustrated |
+|---|---|---|---|---|---|
+| 1. MRI pre-authorization | PPO | preapproval | `approve_pre_authorization` | Rules pass → RAG → LLM approve | Normal preapproval; LLM cites medical-necessity section |
+| 2. Inactive member denial | EPO | standard | `deny_claim` | Rule fires at step 1 (inactive plan) | Deterministic override; LLM never called |
+| 3. Missing clinical note | PPO | preapproval | `request_missing_documentation` | Rule fires at step 3 (required docs) | Doc-gap rule; pipeline short-circuits before retrieval |
+| 4. Experimental treatment | PPO | standard | `deny_claim` | Rules pass → RAG → LLM deny | LLM cites "Experimental or Investigational services" exclusion |
+| 5. High-amount hip replacement | PPO | standard | `route_to_senior_reviewer` | Rule fires at step 4 (amount > $5,000) | High-value routing; LLM never called |
+| 6. Reconstructive surgery appeal | PPO | appeal | `approve_claim_payment` | Rules pass → RAG → LLM overturn prior denial | Appeal overturning a cosmetic-exclusion denial; LLM cites reconstructive-surgery carve-out |
+
+**Scenario design rationale.** Scenarios 2, 3, and 5 are rule-terminal — they demonstrate that the LLM is never reached when a deterministic override applies. Scenarios 1, 4, and 6 require retrieval and the LLM, and they span approve, deny, and overturn-on-appeal. Scenario 6 is the most complex: the prior denial was a cosmetic-exclusion denial; the appeal succeeds because the PPO's "Cosmetic Services" section contains an explicit carve-out for post-trauma reconstructive procedures.
+
+---
+
+## 4.5 How to run the demo
+
+### Prerequisites
+
+```bash
+cd backend
+pip install -r requirements.txt   # rank_bm25, anthropic, fastapi, streamlit, pydantic, pypdf
+export ANTHROPIC_API_KEY=<your key>
+```
+
+The prototype uses two Claude models:
+- `CLAIMS_AGENT_MODEL` (default `claude-sonnet-4-5`) — the review agent.
+- `CLAIMS_INTAKE_MODEL` (default same) — the intake extraction step. Point this at a smaller/cheaper model in production.
+
+### Starting the app
+
+```bash
+# Terminal 1: API server
+cd backend && uvicorn backend.api.main:app --reload --port 8000
+
+# Terminal 2: Streamlit UI
+streamlit run frontend/app.py
+```
+
+### Using the UI
+
+```mermaid
+flowchart LR
+    A[Pick scenario<br/>from sidebar] --> B[Scenario text<br/>auto-fills chat]
+    B --> C[Submit]
+    C --> D{Intake loop}
+    D -->|all fields present| E[Run review]
+    D -->|missing field| F[Assistant asks<br/>targeted question]
+    F --> G[User replies] --> D
+    E --> H[Decision card<br/>+ confidence badge]
+    H --> I[Expand citations]
+    H --> J[Expand trace<br/>panel]
+```
+
+1. **Pick a scenario** from the sidebar. The preset text fills the chat input automatically — hit Enter or click Send.
+2. **Watch the intake loop.** If any required field is missing from the description, the assistant asks a targeted follow-up. Scenarios 1–6 are written to be complete on the first message; free-text queries may require one or two follow-up turns.
+3. **Read the decision card.** The card shows: action, confidence badge (HIGH / MEDIUM / LOW), pipeline path, and the primary policy section cited.
+4. **Expand citations.** Each citation shows the policy section label, the verbatim excerpt, and the BM25 relevance score. These excerpts are the same text the LLM was given — nothing was added after the fact.
+5. **Expand the trace panel.** Each pipeline step is logged: which rules fired (and which did not), the retrieval query and top-scored chunks, the LLM model and token counts, and any validator issues. This is what §1.2 calls the "walk it backwards" debugging surface.
+
+### Free-text input
+
+Type a claim description in plain English. The intake agent (§3.3) extracts structured fields, identifies what is missing, and asks follow-up questions until the claim is complete. Alternatively, paste a JSON object directly:
+
+```json
+{
+  "claim_type": "standard",
+  "member_status": "active",
+  "insurance_provider": "Blue Shield PPO",
+  "diagnosis_code": "M54.5",
+  "procedure_code": "MRI-LS-SPINE",
+  "claimed_amount": 2200
+}
+```
+
+The intake layer detects JSON and skips NL extraction. Useful for testing edge cases without crafting a prose description.
+
+### Demo scope
+
+The prototype indexes Blue Shield of California documents only (PPO: 381 chunks; EPO: 26 chunks; HMO: 17 chunks). Entering a claim for Aetna, UHC, or any other carrier triggers the input guardrail and routes to senior review with an explanation. This is correct behavior by design — the production system would have a corpus per carrier.
+
+EPO and HMO have thin corpora (chunks are mostly "Document Start" artifacts from the PDF chunker). The retrieval confidence guard will frequently escalate for EPO and HMO claims where policy-specific language is absent. Scenario 2 (EPO, inactive member) is rule-terminal and does not reach retrieval, so it works cleanly for EPO.
+
+### Running the offline eval
+
+```bash
+cd backend
+python -m backend.eval.run
+# Emits eval/report.json and eval/report.md
+```
+
+The eval set covers all six tool actions, all four override conditions, and perturbation variants. Results are grouped by pipeline path and failure bucket (§2.5). Review `eval/report.md` for per-case trace diffs on any failure.
+
+---
+
+## 4.6 What to look at as a reviewer
+
+If you are reading this report alongside the running demo, three things are worth verifying directly:
+
+1. **Rule-terminal behavior.** Run scenario 2 (inactive member) or scenario 3 (missing docs). Expand the trace panel. The rule step should show `triggered: true`; the `rag.search` and `llm.request` steps should not appear. This confirms the LLM is never called for these cases.
+
+2. **Citation verifiability.** Run scenario 4 (experimental treatment) or scenario 6 (reconstructive surgery appeal). Expand a citation card. The excerpt is the exact text the LLM received in its context window — the span verifier confirms this before the decision is returned. The section label ("General exclusions and limitations — Experimental or Investigational services", or "Cosmetic Services, Supplies, or Surgeries") is the heading the BM25 chunker found in the PDF.
+
+3. **Appeal overturning (scenario 6).** The prior denial reason is "Denied as cosmetic surgery." The appeal succeeds because the retrieved policy section contains an explicit carve-out: reconstructive procedures following documented trauma are covered even when they have cosmetic effect. The trace shows the LLM's decision grounded in that specific clause, not in a general approval of reconstructive surgery.
+
+These three behaviors — deterministic short-circuits, verbatim citation grounding, and claim-specific policy reasoning — are the core properties the design sets out to achieve. The prototype demonstrates each one is reachable in a running system.
+
+---
 
 1. **Insurer remap.** Sample claims use `insurance_provider` values (UnitedHealthcare, Aetna, BCBS) that do not match the provided Blue Shield policy documents. Claims were remapped to Blue Shield PPO / EPO / HMO based on claim-type and plan-type fit. A production system would require a claim ↔ plan registry; the prototype assumes the remap is correct.
 2. **No PHI in scope.** All sample data is synthetic. A production deployment would add PHI handling (encryption at rest via the envelope scheme in §1.4, access logging, BAA-bound model provider).
@@ -723,5 +952,4 @@ If none fire → retrieval + LLM.
 - **Held-out**: ~20 cases, labeled once and never shown to the developer. Runs at release.
 
 No policy-chunk overlap between splits: if a chunk is the gold citation for a seed case, it is not the gold citation for any dev or held-out case. This prevents the retriever from memorizing chunk ↔ case bindings.
-
 

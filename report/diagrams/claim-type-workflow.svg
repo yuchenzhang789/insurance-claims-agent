@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1900" height="940" viewBox="0 0 1900 940">
+  <defs>
+    <style>
+      .bg { fill: #ffffff; }
+      .box { fill: #f8fafc; stroke: #334155; stroke-width: 3; rx: 18; ry: 18; }
+      .decision { fill: #fff7ed; stroke: #c2410c; stroke-width: 3; }
+      .label { font-family: Arial, sans-serif; font-size: 22px; fill: #0f172a; text-anchor: middle; dominant-baseline: middle; }
+      .small { font-family: Arial, sans-serif; font-size: 18px; fill: #9a3412; text-anchor: middle; dominant-baseline: middle; }
+      .arrow { fill: none; stroke: #475569; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="12" markerHeight="10" refX="10" refY="5" orient="auto">
+      <polygon points="0 0, 12 5, 0 10" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1900" height="940"/>
+
+  <rect class="box" x="570" y="40" width="760" height="86" rx="18" ry="18"/>
+  <text class="label" x="950" y="83">Claim Passed Validation and Overrides</text>
+
+  <polygon class="decision" points="950,185 1100,270 950,355 800,270"/>
+  <text class="label" x="950" y="270">Claim Type</text>
+
+  <rect class="box" x="60" y="420" width="500" height="88" rx="18" ry="18"/>
+  <text class="label" x="310" y="464">Pre-Approval: Retrieve Coverage Criteria</text>
+  <rect class="box" x="60" y="585" width="500" height="88" rx="18" ry="18"/>
+  <text class="label" x="310" y="629">Check Clinical Notes and Diagnosis</text>
+  <rect class="box" x="60" y="750" width="500" height="88" rx="18" ry="18"/>
+  <text class="label" x="310" y="794">Approve, Deny, Request Docs, or Escalate</text>
+
+  <rect class="box" x="700" y="420" width="500" height="88" rx="18" ry="18"/>
+  <text class="label" x="950" y="464">Standard Claim: Retrieve Coverage Evidence</text>
+  <rect class="box" x="700" y="585" width="500" height="88" rx="18" ry="18"/>
+  <text class="label" x="950" y="629">Validate Coverage for Requested Service</text>
+  <rect class="box" x="700" y="750" width="500" height="88" rx="18" ry="18"/>
+  <text class="label" x="950" y="794">Approve Payment, Deny, or Escalate</text>
+
+  <rect class="box" x="1340" y="420" width="500" height="88" rx="18" ry="18"/>
+  <text class="label" x="1590" y="450">Appeal: Retrieve Evidence with</text>
+  <text class="label" x="1590" y="478">Prior Denial Reason</text>
+  <rect class="box" x="1340" y="585" width="500" height="88" rx="18" ry="18"/>
+  <text class="label" x="1590" y="629">Compare New Evidence to Prior Denial Basis</text>
+  <rect class="box" x="1340" y="750" width="500" height="88" rx="18" ry="18"/>
+  <text class="label" x="1590" y="794">Overturn, Uphold, Request Docs, or Escalate</text>
+
+  <path class="arrow" d="M 950 126 L 950 185"/>
+
+  <path class="arrow" d="M 835 333 L 310 420"/>
+  <path class="arrow" d="M 950 355 L 950 420"/>
+  <path class="arrow" d="M 1065 333 L 1590 420"/>
+
+  <text class="small" x="560" y="360">Pre-Approval</text>
+  <text class="small" x="950" y="385">Standard Claim</text>
+  <text class="small" x="1340" y="360">Appeal</text>
+
+  <path class="arrow" d="M 310 508 L 310 585"/>
+  <path class="arrow" d="M 310 673 L 310 750"/>
+
+  <path class="arrow" d="M 950 508 L 950 585"/>
+  <path class="arrow" d="M 950 673 L 950 750"/>
+
+  <path class="arrow" d="M 1590 508 L 1590 585"/>
+  <path class="arrow" d="M 1590 673 L 1590 750"/>
+</svg>
