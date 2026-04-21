@@ -168,13 +168,23 @@ def extract_claim_fields(messages: list[dict]) -> dict:
             "prior_denial_reason": raw_json.get("prior_denial_reason"),
         }
 
+    # Anthropic API requires messages to start with "user" role — strip any leading assistant turns.
+    api_messages = [m for m in messages if m["role"] in ("user", "assistant")]
+    while api_messages and api_messages[0]["role"] != "user":
+        api_messages = api_messages[1:]
+    if not api_messages:
+        return {}
+
     client = Anthropic()
-    resp = client.messages.create(
-        model=INTAKE_MODEL,
-        max_tokens=512,
-        system=EXTRACT_SYSTEM,
-        messages=messages,
-    )
+    try:
+        resp = client.messages.create(
+            model=INTAKE_MODEL,
+            max_tokens=512,
+            system=EXTRACT_SYSTEM,
+            messages=api_messages,
+        )
+    except Exception:
+        return {}
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     if text.startswith("```"):
         text = text.split("```")[1]
