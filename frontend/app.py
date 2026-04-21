@@ -174,11 +174,24 @@ def compute_confidence(result: dict) -> dict:
     }
 
 
+# Section labels that are PDF-chunker artifacts, not meaningful policy sections.
+_WEAK_SECTION_LABELS = {"Document Start", "Emergency Services", "Table of contents"}
+
+# Human-readable policy labels derived from the rule that terminated the pipeline.
+_RULE_POLICY_LABELS = {
+    "rule.inactive_plan": "Member Eligibility",
+    "rule.code_consistency": "Claim Coding Accuracy",
+    "rule.required_docs": "Required Documentation",
+    "rule.high_amount": "High-Cost Authorization",
+}
+
+
 def decision_summary(result: dict, conf: dict) -> dict:
     """Derive a compact path/reason/section summary from the result trace."""
     trace = result.get("trace", [])
     decision = result.get("decision", {})
 
+    triggered_rule = None
     guard_input_step = next((t for t in trace if t["step"] == "guard.input"), None)
     if guard_input_step and not guard_input_step["detail"].get("passed"):
         path = "Input guardrail block"
@@ -195,6 +208,7 @@ def decision_summary(result: dict, conf: dict) -> dict:
                 t["detail"].get("consistent") is False or
                 t["detail"].get("missing")
             ):
+                triggered_rule = t["step"]
                 path = rule_map.get(t["step"], f"Deterministic rule: {t['step']}")
                 break
         else:
@@ -208,7 +222,15 @@ def decision_summary(result: dict, conf: dict) -> dict:
     sections = list(dict.fromkeys(
         c["section"] for c in cits if c.get("section") and (c.get("score") or 0) > 0
     ))
-    return {"path": path, "primary_section": sections[0] if sections else None}
+    primary_section = sections[0] if sections else None
+
+    # Replace artifact section labels with a rule-derived description for rule-terminal paths.
+    if primary_section in _WEAK_SECTION_LABELS and triggered_rule:
+        primary_section = _RULE_POLICY_LABELS.get(triggered_rule, primary_section)
+    elif primary_section in _WEAK_SECTION_LABELS:
+        primary_section = None  # Don't show a misleading label
+
+    return {"path": path, "primary_section": primary_section}
 
 
 def add_message(role: str, content: str):
