@@ -62,7 +62,7 @@ DEMO_PRESETS = {
     "👤 High-amount senior review (PPO, hip replacement)": (
         "Active Blue Shield PPO member submitting a standard claim for hip replacement. "
         "Diagnosis S72.001A, procedure HIP-REPLACEMENT, claimed amount $15,500. "
-        "Supporting documents: op_note, discharge_summary. "
+        "Supporting documents: claim_form, op_note, discharge_summary. "
         "Provider notes: Hip fracture treated surgically."
     ),
     "🔁 Appeal with new evidence (EPO, psychotherapy)": (
