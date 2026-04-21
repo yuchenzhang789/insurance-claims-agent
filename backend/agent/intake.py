@@ -183,8 +183,8 @@ def extract_claim_fields(messages: list[dict]) -> dict:
             system=EXTRACT_SYSTEM,
             messages=api_messages,
         )
-    except Exception:
-        return {}
+    except Exception as e:
+        return {"_extraction_error": str(e)}
     text = "".join(b.text for b in resp.content if b.type == "text").strip()
     if text.startswith("```"):
         text = text.split("```")[1]

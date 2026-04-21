@@ -174,6 +174,43 @@ def compute_confidence(result: dict) -> dict:
     }
 
 
+def decision_summary(result: dict, conf: dict) -> dict:
+    """Derive a compact path/reason/section summary from the result trace."""
+    trace = result.get("trace", [])
+    decision = result.get("decision", {})
+
+    guard_input_step = next((t for t in trace if t["step"] == "guard.input"), None)
+    if guard_input_step and not guard_input_step["detail"].get("passed"):
+        path = "Input guardrail block"
+    elif conf["rule_terminal"]:
+        rule_map = {
+            "rule.inactive_plan": "Deterministic rule: Inactive member",
+            "rule.code_consistency": "Deterministic rule: Code mismatch",
+            "rule.required_docs": "Deterministic rule: Missing documentation",
+            "rule.high_amount": "Deterministic rule: High-amount threshold",
+        }
+        for t in trace:
+            if t["step"].startswith("rule.") and (
+                t["detail"].get("triggered") or
+                t["detail"].get("consistent") is False or
+                t["detail"].get("missing")
+            ):
+                path = rule_map.get(t["step"], f"Deterministic rule: {t['step']}")
+                break
+        else:
+            path = "Deterministic rule engine"
+    elif any(t["step"] in ("guard.low_confidence_retrieval", "guard.ungrounded_decision") for t in trace):
+        path = "Safety guard escalation"
+    else:
+        path = "Retrieval + LLM policy review"
+
+    cits = decision.get("citations") or []
+    sections = list(dict.fromkeys(
+        c["section"] for c in cits if c.get("section") and (c.get("score") or 0) > 0
+    ))
+    return {"path": path, "primary_section": sections[0] if sections else None}
+
+
 def add_message(role: str, content: str):
     st.session_state.messages.append({"role": role, "content": content})
 
@@ -187,6 +224,11 @@ def reset():
 # ── Layout ─────────────────────────────────────────────────────────────────
 st.title("🏥 Insurance Claims Review Agent")
 st.caption("Policy-emulation decision support · Not medical advice · Powered by Claude")
+st.info(
+    "**Demo scope:** Blue Shield of California PPO / EPO / HMO Access+. "
+    "Production design supports one indexed corpus per carrier/plan.",
+    icon="ℹ️",
+)
 
 col_chat, col_status = st.columns([2, 1])
 
@@ -308,6 +350,14 @@ with col_chat:
                         st.caption(f"Plan: {c['plan']}")
                         st.markdown(f"> {c['excerpt']}")
 
+            # Compact decision summary
+            conf = compute_confidence(result)
+            summ = decision_summary(result, conf)
+            summary_parts = [f"**Path:** {summ['path']}"]
+            if summ["primary_section"]:
+                summary_parts.append(f"**Policy section:** {summ['primary_section']}")
+            st.caption("  ·  ".join(summary_parts))
+
             st.markdown("**Decision trace:**")
             step_icons = {"rule": "⚙️", "rag": "🔎", "llm": "🤖", "validate": "✔️", "guard": "🛡️"}
             step_labels = {
@@ -404,6 +454,18 @@ with col_chat:
                             [{"role": m["role"], "content": m["content"]}
                              for m in st.session_state.messages]
                         )
+                    if raw.get("_extraction_error"):
+                        reply = (
+                            "⚠️ Natural-language extraction is temporarily unavailable. "
+                            "Try a **pre-loaded scenario** from the sidebar, or enter your claim as structured JSON:\n\n"
+                            '> `{"claim_type": "standard", "member_status": "active", '
+                            '"insurance_provider": "Blue Shield PPO", "diagnosis_code": "M54.5", '
+                            '"procedure_code": "MRI-LS-SPINE", "claimed_amount": 2200}`'
+                        )
+                        add_message("assistant", reply)
+                        with st.chat_message("assistant"):
+                            st.markdown(reply)
+                        st.rerun()
                     provider_raw = raw.get("insurance_provider") or raw.pop("_unsupported_provider", None)
                     normalized, unsupported, needs_plan = _normalize_provider(provider_raw)
                     raw.pop("_unsupported_provider", None)
@@ -413,9 +475,9 @@ with col_chat:
                 # Handle unsupported provider
                 if unsupported:
                     reply = (
-                        f"This demo currently does not support **{unsupported}**. "
-                        f"Please use one of the following Blue Shield of California plans: "
-                        f"**PPO**, **EPO**, or **HMO Access+**."
+                        f"**{unsupported}** is outside this prototype's scope. "
+                        "This demo indexes **Blue Shield of California** plans only (PPO, EPO, HMO Access+). "
+                        "Try a pre-loaded scenario from the sidebar, or re-describe the claim using a Blue Shield plan."
                     )
                     add_message("assistant", reply)
                     with st.chat_message("assistant"):

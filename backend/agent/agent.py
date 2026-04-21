@@ -292,12 +292,16 @@ def _validate_input(claim: Claim, trace: list[TraceStep]) -> None:
     trace.append(TraceStep(step="validate.input", detail=checks))
 
 
-def _guard_input(claim: Claim, trace: list[TraceStep]) -> None:
-    """Step 1: Log input guardrail checks (carrier scope, injection heuristic, amount sanity)."""
+def _guard_input(claim: Claim, trace: list[TraceStep]) -> Decision | None:
+    """Step 1: Input guardrail — carrier scope, injection heuristic, amount sanity.
+
+    Returns a blocking Decision if any check fails, None to continue the pipeline.
+    """
     provider_supported = claim.insurance_provider in _SUPPORTED_PROVIDERS
     notes_lower = (claim.provider_notes or "").lower()
     injection_detected = any(phrase in notes_lower for phrase in _INJECTION_PHRASES)
     amount_sane = 0 <= claim.claimed_amount < 1_000_000
+    passed = provider_supported and not injection_detected and amount_sane
 
     trace.append(TraceStep(
         step="guard.input",
@@ -305,9 +309,37 @@ def _guard_input(claim: Claim, trace: list[TraceStep]) -> None:
             "provider_supported": provider_supported,
             "injection_detected": injection_detected,
             "amount_sane": amount_sane,
-            "passed": provider_supported and not injection_detected and amount_sane,
+            "passed": passed,
         },
     ))
+
+    if passed:
+        return None
+
+    if not provider_supported:
+        reason = (
+            f"Carrier '{claim.insurance_provider}' is not in the supported plan corpus "
+            f"({', '.join(sorted(_SUPPORTED_PROVIDERS))}). "
+            "This prototype is scoped to Blue Shield of California plans only. "
+            "This is a policy-emulation decision, not medical advice."
+        )
+    elif injection_detected:
+        reason = (
+            "Input guardrail: provider_notes contains a phrase associated with prompt injection. "
+            "Claim blocked for manual safety review. "
+            "This is a policy-emulation decision, not medical advice."
+        )
+    else:
+        reason = (
+            f"Input guardrail: claimed amount ${claim.claimed_amount:,.2f} is outside the "
+            "acceptable range ($0–$999,999). Please verify the amount and resubmit. "
+            "This is a policy-emulation decision, not medical advice."
+        )
+    return Decision(
+        action="route_to_senior_reviewer",
+        reason=reason,
+        routing_target="senior_medical_reviewer",
+    )
 
 
 def review_claim(claim: Claim, client: Anthropic | None = None) -> ReviewResult:
@@ -317,8 +349,11 @@ def review_claim(claim: Claim, client: Anthropic | None = None) -> ReviewResult:
     # Step 0: Input validation
     _validate_input(claim, trace)
 
-    # Step 1: Input guardrails
-    _guard_input(claim, trace)
+    # Step 1: Input guardrails — block before any rules/retrieval/LLM
+    guard_block = _guard_input(claim, trace)
+    if guard_block is not None:
+        guard_block = _guard_output(guard_block, trace)
+        return ReviewResult(claim_id=claim.claim_id, decision=guard_block, trace=trace)
 
     # Step 2+: Rule engine
     terminal, rule_trace = check_overrides(claim)
