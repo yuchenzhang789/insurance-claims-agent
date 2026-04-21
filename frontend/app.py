@@ -65,13 +65,13 @@ DEMO_PRESETS = {
         "Supporting documents: claim_form, op_note, discharge_summary. "
         "Provider notes: Hip fracture treated surgically."
     ),
-    "🔁 Appeal with new evidence (PPO, psychotherapy)": (
-        "Active Blue Shield PPO member submitting an appeal for psychotherapy. "
-        "Diagnosis F32.9, procedure PSYCH-THERAPY, claimed amount $900. "
-        "Supporting documents: appeal_letter, clinical_note. "
-        "Prior denial reason: Insufficient documentation of medical necessity. "
-        "Provider notes: Appeal for previously denied sessions, now including updated progress notes "
-        "demonstrating medical necessity and functional impairment."
+    "🔁 Appeal with new evidence (PPO, reconstructive surgery)": (
+        "Active Blue Shield PPO member appealing a denied claim for reconstructive nasal surgery "
+        "following workplace trauma. Diagnosis L90.5, procedure RECONSTRUCTIVE-SURGERY, claimed amount $3,200. "
+        "Supporting documents: appeal_letter, op_note, clinical_note. "
+        "Prior denial reason: Denied as cosmetic surgery. "
+        "Provider notes: Surgery restores nasal function and appearance after documented workplace injury; "
+        "patient has impaired breathing and facial deformity from trauma."
     ),
 }
 
