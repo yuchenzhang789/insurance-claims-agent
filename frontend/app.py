@@ -192,26 +192,7 @@ col_chat, col_status = st.columns([2, 1])
 
 # ── Status sidebar ─────────────────────────────────────────────────────────
 with col_status:
-    st.subheader("Claim Fields")
-    partial = st.session_state.partial_claim
-    fields = {
-        "Claim type": partial.get("claim_type"),
-        "Member status": partial.get("member_status"),
-        "Plan": partial.get("insurance_provider"),
-        "Diagnosis code": partial.get("diagnosis_code"),
-        "Procedure": partial.get("procedure_code"),
-        "Amount": f"${partial.get('claimed_amount'):,.2f}" if partial.get("claimed_amount") else None,
-        "Prior denial": partial.get("prior_denial_reason"),
-        "Documents": ", ".join(partial.get("supporting_documents") or []) or None,
-    }
-    for label, val in fields.items():
-        if val:
-            st.markdown(f"**{label}:** {val}")
-        else:
-            st.markdown(f"<span style='color:#aaa'>**{label}:** —</span>", unsafe_allow_html=True)
-
     stage = st.session_state.stage
-    st.divider()
     stage_labels = {
         "intake": "🟡 Gathering claim info",
         "validating": "🟡 Validating fields",
@@ -255,6 +236,25 @@ with col_status:
             st.markdown(f"- Output guard: {'✅ passed' if conf['output_guard_passed'] else '❌ failed'}")
         with st.expander("📄 Full decision JSON"):
             st.code(json.dumps(st.session_state.result, indent=2), language="json")
+
+    st.divider()
+    st.subheader("Claim Fields")
+    partial = st.session_state.partial_claim
+    fields = {
+        "Claim type": partial.get("claim_type"),
+        "Member status": partial.get("member_status"),
+        "Plan": partial.get("insurance_provider"),
+        "Diagnosis code": partial.get("diagnosis_code"),
+        "Procedure": partial.get("procedure_code"),
+        "Amount": f"${partial.get('claimed_amount'):,.2f}" if partial.get("claimed_amount") else None,
+        "Prior denial": partial.get("prior_denial_reason"),
+        "Documents": ", ".join(partial.get("supporting_documents") or []) or None,
+    }
+    for label, val in fields.items():
+        if val:
+            st.markdown(f"**{label}:** {val}")
+        else:
+            st.markdown(f"<span style='color:#aaa'>**{label}:** —</span>", unsafe_allow_html=True)
 
 
 # ── Chat panel ─────────────────────────────────────────────────────────────
